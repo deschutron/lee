@@ -1,0 +1,1560 @@
+%prefix "lee_parser"
+#
+%header {
+	#define lee_parser lee_parser_context_t
+	#define lee_parser_new lee_parser_create
+}
+%common {
+	#include "lee.h"
+}
+%source {
+	#include "shared_shortcuts.h"
+	static node* numcat(
+		node* x, const char* zeroes, const char* y_str, fast_u8 base
+	) {
+		node* y,* zeroes_node;
+		u64 len;
+		u64 base_as_u64;
+		base_as_u64 = (u64)base;
+		zeroes_node = leaf_node_new('"', zeroes);
+		y = leaf_node_new(stru32z("num"), y_str);
+		len = zeroes_node->len + y->len;
+		return op_node_new('+',
+			op_node_new('*',
+				apply_opr(
+					box_node_new(stru32z("o^"),
+						leaf_node_new(stru32z("opr"), "*")
+					),
+					leaf_node_new('\'', (char*)&base_as_u64),
+					blob_node_new('\'', (u8*)&len, 1 + (len >= 256))
+				),
+				x
+			),
+			y
+		);
+	}
+	node* the_program;
+}
+%value "node*"
+program <-
+	_ x:sequenc _ !. {
+		the_program = in_scope(x,
+			scope_new(borrow(global_scope()->global))
+		);
+	}
+sequenc <-
+	';' _ x:isequen _ ';' {
+		$$ = x;
+	} /
+	';' _ x:isequen {
+		$$ = x;
+	} /
+	x:isequen _ ';' {
+		$$ = x;
+	} /
+	x:isequen {
+		$$ = x;
+	} /
+	## empty
+	{
+		$$ = empty_node_new(stru32z("voi"));
+	}
+isequen <-
+	x:isequen _ ';' _ y:isequen {
+		$$ = op_node_new(';', x, y);
+	} /
+	x:iffexpr {
+		$$ = x;
+	} /
+	x:loneopr {
+		$$ = box_node_new(stru32z("o "), x);
+	}
+cmaexpr <-
+	',' _ x:icmaexp _ ',' {
+		$$ = x;
+	} /
+	',' _ x:icmaexp {
+		$$ = x;
+	} /
+	x:icmaexp _ ',' {
+		$$ = x;
+	} /
+	x:icmaexp {
+		$$ = x;
+	}
+icmaexp <-
+	x:icmaexp _ ',' _ y:icmaexp {
+		$$ = op_node_new(',', x, y);
+	} /
+	x:iffexpr {
+		$$ = x;
+	} /
+	x:cmacstr {
+		$$ = x;
+	} /
+	x:loneopr {
+		$$ = box_node_new(stru32z("o "), x);
+	}
+cmacstr <-
+	x:label ':=' y:sum {
+		$$ = op_node_new(stru32z(":="), x, y);
+	} /
+	x:label '::' y:sum {
+		$$ = op_node_new(stru32z("::"), x, y);
+	} /
+	x:label ':=:' {
+		$$ = op_node_new(stru32z(":="), x, x);
+	} /
+	x:label ':::' {
+		$$ = op_node_new(stru32z("::"), x, x);
+	}
+loneopr <-
+	x:expoopr {
+		$$ = x;
+	} /
+	x:box_opr {
+		$$ = x;
+	} /
+	x:prodopr {
+		$$ = x;
+	} /
+	x:sum_opr {
+		$$ = x;
+	} /
+	'!:' {
+		$$ = leaf_node_new(stru32z("opr"), "!:");
+	} /
+	'(:)' {
+		$$ = leaf_node_new(stru32z("opr"), ":");
+	} /
+	gapunit ':' {
+		$$ = leaf_node_new(stru32z("opr"), ":");
+	} /
+	x:nequopr {
+		$$ = x;
+	} /
+	x:equaopr {
+		$$ = x;
+	}
+iffexpr <-
+	x:iffexpr _ '<=>' _ y:xdsjuci {
+		$$ = op_node_new(stru32z("<=>"), x, y);
+	} /
+	x:xdsjuci {
+		$$ = x;
+	}
+xdsjuci <-
+	x:xdsjuci _ '<!>' _ y:implici {
+		$$ = op_node_new(stru32z("<!>"), x, y);
+	} /
+	x:implici {
+		$$ = x;
+	}
+implici <-
+	x:implici _ '==>' _ y:xdsjuci {
+		$$ = op_node_new(stru32z("==>"), x, y);
+	} /
+	x:implici _ '!=>' _ y:xdsjuci {
+		$$ = op_node_new(stru32z("!=>"), x, y);
+	} /
+	x:disjuci {
+		$$ = x;
+	}
+disjuci <-
+	x:disjuci _ '||' _ y:cjuncti {
+		$$ = op_node_new(stru32z("||"), x, y);
+	} /
+	x:cjuncti {
+		$$ = x;
+	}
+cjuncti <-
+	x:cjuncti _ '&&' _ y:equatio {
+		$$ = op_node_new(stru32z("&&"), x, y);
+	} /
+	x:equatio {
+		$$ = x;
+	}
+equatio <-
+	x:equatio _ o:equaopr _ y:nequali {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:nequali {
+		$$ = x;
+	}
+equaopr <-
+	'=' {
+		$$ = leaf_node_new(stru32z("opr"), "=");
+	} /
+	'!=' {
+		$$ = leaf_node_new(stru32z("opr"), "!=");
+	}
+nequali <-
+	x:nequali _ o:nequopr _ y:ctainmn {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:ctainmn {
+		$$ = x;
+	}
+nequopr <-
+	"<=" {
+		$$ = leaf_node_new(stru32z("opr"), "<=");
+	} /
+	">=" {
+		$$ = leaf_node_new(stru32z("opr"), "=>");
+	} /
+	<[<>]> {
+		$$ = leaf_node_new(stru32z("opr"), $1);
+	}
+ctainmn <-
+	x:ctainmn _ o:ctaiopr _ y:sum {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:cstrain {
+		$$ = x;
+	} /
+	x:sum {
+		$$ = x;
+	}
+ctaiopr <-
+	':' {
+		$$ = leaf_node_new(stru32z("opr"), ":");
+	} /
+	'!:' {
+		$$ = leaf_node_new(stru32z("opr"), "!:");
+	}
+cstrain <-
+	x:label '::=' y:sum {
+		$$ = op_node_new(stru32z("::="), x, y);
+	} /
+	x:label ':::' y:sum {
+		$$ = op_node_new(stru32z(":::"), x, y);
+	} /
+	x:label '::=:' {
+		$$ = op_node_new(stru32z("::="), x, x);
+	} /
+	x:label '::::' {
+		$$ = op_node_new(stru32z(":::"), x, x);
+	} /
+	x:sum {
+		$$ = x;
+	}
+sum <-
+	x:sum _ o:sum_opr _ y:cati {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:cati {
+		$$ = x;
+	}
+cati <-
+	x:cati _ '.||' _ y:githexp {
+		$$ = op_node_new(stru32z(".||"), x, y);
+	} /
+	x:githexp {
+		$$ = x;
+	}
+githexp <-
+	x:lmdexpr _ '|' _ y:iffexpr {
+		$$ = op_node_new('|', x, y);
+	} /
+	x:lmdexpr {
+		$$ = x;
+	}
+lmdexpr <-
+	x:prfterm _ '=>' _ y:iffexpr {
+		$$ = in_scope(
+			op_node_new(stru32z("=>"), x, y),
+			scope_new(borrow(global_scope()->global))
+		);
+	} /
+	x:prfterm {
+		$$ = x;
+	}
+prfterm <-
+	o:sum_opr _ x:prfterm {
+		$$ = apply_bxr(o, x);
+	} /
+	x:product {
+		$$ = x;
+	}
+sum_opr <-
+	<[+\-]> {
+		$$ = leaf_node_new(stru32z("opr"), $1);
+	}
+product <-
+	x:product _ o:prodopr _ y:having {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:prffact {
+		$$ = x;
+	} /
+	x:having {
+		$$ = x;
+	}
+prffact <-
+	o:prodprf x:product {
+		$$ = apply_bxr(o, x);
+	}
+prodprf <-
+	x:prodprf y:prefopr {
+		$$ = op_node_new(stru32z("bo"), x, y);
+	} /
+	'//' {
+		$$ = leaf_node_new(stru32z("opr"), "//");
+	} /
+	x:box_opr {
+		$$ = x;
+	}
+prodopr <-
+	'*' {
+		$$ = leaf_node_new(stru32z("opr"), "*");
+	} /
+	'//' {
+		$$ = leaf_node_new(stru32z("opr"), "//");
+	}
+having <-
+	'have' _ x:articli {
+		$$ = box_node_new(stru32z("hav"), x);
+	} /
+	'pub' _ x:articli {
+		$$ = box_node_new(stru32z("pub"), x);
+	} /
+	x:articli {
+		$$ = x;
+	}
+articli <-
+	'$' _ x:paoseol {
+		$$ = box_node_new('$', x);
+	} /
+	x:paoseol {
+		$$ = x;
+	}
+paoseol <-
+	x:setting {
+		$$ = x;
+	} /
+	x:letting {
+		$$ = x;
+	} /
+	x:path {
+		$$ = x;
+	}
+setting <-
+	'set' _ x:equatio {
+		$$ = box_node_new(stru32z("set"), x);
+	}
+letting <-
+	'let' _ x:equatio {
+		$$ = box_node_new(stru32z("let"), x);
+	}
+path <-
+	x:path _ o:pathopr _ y:label _ e:expoopr _ z:object {
+		$$ = apply_opr(e, apply_opr(o, x, y), z);
+	} /
+	x:path _ o:pathopr _ y:label {
+		$$ = apply_opr(o, x, y);
+	} /
+	x:path _ y:object _ e:expoopr _ z:object {
+		$$ = op_node_new(' ', x, apply_opr(e, y, z));
+	} /
+	x:path _ y:object {
+		$$ = op_node_new(' ', x, y);
+	} /
+	x:path _ o:pathopr _ e:expoopr _ y:object {
+		$$ = apply_opr(e, op_node_new(stru32z("osuf"), o, x), y);
+	} /
+	x:pathprf _ y:label {
+		$$ = op_node_new(stru32(x->s), x, y);
+	} /
+	x:pathprf _ e:expoopr _ y:label {
+		$$ = apply_opr(e, x, y);
+	} /
+	'(' _ x:pathprf _ ')' {
+		$$ = x;
+	} /
+	x:pathprf gapunit {
+		$$ = x;
+	} /
+	x:object _ e:expoopr _ y:object {
+		$$ = apply_opr(e, x, y);
+	} /
+	x:object {
+		$$ = x;
+	}
+expoopr <-
+	x:loneopr '^' {
+		$$ = box_node_new(stru32z("o^"), x);
+	} /
+	'^' {
+		$$ = leaf_node_new(stru32z("opr"), "^");
+	}
+pathprf <-
+	<[#./]> {
+		$$ = leaf_node_new(stru32z("roo"), $1);
+	}
+pathopr <-
+	x:prefopr y:pathopr {
+		$$ = op_node_new(stru32z("bo"), x, y);
+	} /
+	<[#./]> {
+		$$ = leaf_node_new(stru32z("opr"), $1);
+	}
+prefopr <-
+	<[$+\-]> {
+		$$ = leaf_node_new(stru32z("opr"), $1);
+	} /
+	x:box_opr {
+		$$ = x;
+	} /
+	'//' {
+		$$ = leaf_node_new(stru32z("opr"), "//");
+	}
+box_opr <-
+	<[&*]> {
+		$$ = leaf_node_new(stru32z("opr"), $1);
+	}
+object <-
+	x:nlaobje {
+		$$ = x;
+	} /
+	x:label {
+		$$ = x;
+	}
+label <-
+	x:id {
+		$$ = x;
+	} /
+	'[' _ x:sequenc _ ']' {
+		$$ = box_node_new('[', x);
+	} /
+	'[' _ x:cmaexpr _ ']' {
+		$$ = mini_box_node_new('[',
+			box_mininode(stru32z("(,"), x)
+		);
+	}
+nlaobje <-
+	'(' _ x:sequenc _ ')' {
+		$$ = x;
+	} /
+	'(' _ x:cmaexpr _ ')' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'(:' _ x:sequenc _ ')' {
+		$$ = in_scope(x, scope_new(borrow(global_scope()->global)));
+	} /
+	'{' _ x:cmaexpr _ '}' {
+		$$ = box_node_new(stru32z("{,"), x);
+	} /
+	x:numeral {
+		$$ = x;
+	} /
+	x:char {
+		$$ = x;
+	} /
+	x:string {
+		$$ = x;
+	} /
+	x:codestr {
+		$$ = x;
+	} /
+	x:cheat {
+		$$ = x;
+	}
+cheat <-
+	'►' x:cheatcm {
+		$$ = x;
+	}
+cheatcm <-
+	'empty_node_new' _ '(' _ as:cheatst _ ')' {
+		$$ = empty_node_new(*(u32*)as->s);
+	} /
+	'leaf_node_new' _ '(' _ as:cheatst _ ',' _ x:cheatst ')' {
+		$$ = leaf_node_new(stru32(as->s), (char*)x->s);
+	} /
+	'box_node_new' _ '(' _ as:cheatst _ ',' _ x:object _ ')' {
+		$$ = box_node_new(stru32(as->s), x);
+	} /
+	'op_node_new' _ '(' _ op:cheatst _ ',' _ x:object _ ',' _ y:object _ ')' {
+		$$ = op_node_new(stru32(op->s), x, y);
+	}
+cheatst <-
+	'\x22' <[^\x22\\]+> '\x22' {
+		$$ = leaf_node_new('"', $1);
+	} /
+	'\'' <[^\x27]+> '\'' {
+		$$ = leaf_node_new(39, $2);
+	}
+## ↑ yacc stuff
+## ↓ lex stuff
+id <-
+	x:idstart y:idrest {
+		$$ = box_node_new('[', op_node_new(stru32z(".||"), x, y));
+	} /
+	x:idstart {
+		$$ = box_node_new('[', x);
+	}
+idrest <-
+	x:idctinu y:idrest {
+		$$ = op_node_new(stru32z(".||"), x, y);
+	} /
+	x:idctinu {
+		$$ = x;
+	}
+idctinu <-
+	<(id_acct / id_ucct)+> {
+		$$ = leaf_node_new('"', $1);
+	} /
+	x:escapdc {
+		$$ = x;
+	}
+id_acct <-
+	[A-Za-z0-9_]
+id_ucct <-
+	uc
+numeral <-
+	x:znbasf {
+		$$ = x;
+	} /
+	x:xnbasf {
+		$$ = x;
+	} /
+	x:nbasf {
+		$$ = x;
+	} /
+	x:seuznum {
+		$$ = x;
+	} /
+	x:seuxnum {
+		$$ = x;
+	} /
+	x:seunum {
+		$$ = x;
+	} /
+	x:seuznbf {
+		$$ = x;
+	} /
+	x:seuxnbf {
+		$$ = x;
+	} /
+	x:seunbaf {
+		$$ = x;
+	} /
+	x:znum {
+		$$ = x;
+	} /
+	x:xnum {
+		$$ = x;
+	} /
+	x:num {
+		$$ = x;
+	}
+num <-
+	'0'* x:numguts {
+		$$ = numstr(x);
+	} /
+	'0'+ {
+		$$ = borrow(node_ZERO);
+	}
+numguts <-
+	x:numguts '_'? <'0'*> <[0-9]+> {
+		$$ = numcat(x, $1, $2, 10);
+	} /
+	x:numguts '_'? y:numesca {
+		$$ = op_node_new('+',
+			op_node_new('*',
+				leaf_node_new('\'', "\x0a"),
+				x
+			),
+			y
+		);
+	} /
+	x:numseg {
+		$$ = x;
+	}
+numseg <-
+	'0'* <[0-9]+> {
+		$$ = leaf_node_new(stru32z("num"), $1);
+	}
+xnum <-
+	'0' [Xx] '0'* x:xnuguts {
+		$$ = x;
+	} /
+	'0' [Xx] '0'+ {
+		$$ = borrow(node_ZERO);
+	}
+xnuguts <-
+	x:xnuguts '_'? <'0'*> <hxdit+> {
+		$$ = numcat(x, $1, $2, 16);
+	} /
+	x:xnuguts '_'? y:numesca {
+		$$ = op_node_new('+',
+			op_node_new('*',
+				leaf_node_new('\'', "\x10"),
+				x
+			),
+			y
+		);
+	} /
+	x:xnumseg {
+		$$ = x;
+	}
+xnumseg <-
+	'0'* <hxdit+> {
+		$$ = op_node_new(stru32z("nbas"),
+			leaf_node_new('\'', "\x10"),
+			leaf_node_new('"', $1)
+		);
+	}
+znum <-
+	'0' [Zz] '0'* x:znuguts {
+		$$ = x;
+	} /
+	'0' [Zz] '0'+ {
+		$$ = borrow(node_ZERO);
+	}
+znuguts <-
+	x:znuguts '_'? <'0'*> <[0-9A-Za-z]+> {
+		$$ = numcat(x, $1, $2, 36);
+	} /
+	x:znuguts '_'? y:numesca {
+		$$ = op_node_new('+',
+			op_node_new('*',
+				leaf_node_new('\'', "$"),
+				x
+			),
+			y
+		);
+	} /
+	x:znumseg {
+		$$ = x;
+	}
+znumseg <-
+	'0'* <[0-9A-Za-z]+> {
+		$$ = op_node_new(stru32z("nbas"),
+			leaf_node_new('\'', "$"),
+			leaf_node_new('"', $1)
+		);
+	}
+nbasf <-
+	x:nbasfgu '_' {
+		$$ = box_node_new(stru32z("nbasf"),
+			leaf_node_new('"', (char*)x->s)
+		);
+	}
+nbasfgu <-
+	x:nbasfgu '_'? <'0'*> <[0-9]+> {
+		err_node_new("nbasfgu: stub",
+			box_node_new(stru32z("(,"),
+				op_node_new(stru32z("`,"),
+					x,
+					op_node_new(stru32z("`,"),
+						leaf_node_new('"', $1),
+						leaf_node_new('"', $2)
+					)
+				)
+			)
+		);
+	} /
+	x:nbasfgu '_'? y:numesca {
+		err_node_new("nbasfgu: stub",
+			box_node_new(stru32z("(,"),
+				op_node_new(stru32z("`,"), x, y)
+			)
+		);
+	} /
+	x:nbasfsg {
+		$$ = x;
+	}
+nbasfsg <-
+	<[0-9]+> {
+		$$ = box_node_new(stru32z("nbaf"),
+			leaf_node_new('"', $1)
+		);
+	}
+xnbasf <-
+	'0x' x:xnumseg '_' {
+		$$ = box_node_new(stru32z("nbaf"),
+			lyse(x, borrow(x->r))
+		);
+	}
+znbasf <-
+	'0z' x:znumseg '_' {
+		$$ = box_node_new(stru32z("nbaf"),
+			lyse(x, borrow(x->r))
+		);
+	}
+## 小数 - a number with a decimal point
+seunum <-
+	'0'* <[0-9]* '.' ('0'+ [1-9] / [1-9])+> '0'* {
+		$$ = leaf_node_new(stru32z("nseu"), $1);
+	}
+seuxnum <-
+	'0' [Xx] x:seuxngu {
+		$$ = x;
+	}
+seuxngu <-
+	'0'* <hxdit*'.'('0'+ [1-9A-Fa-f]/[1-9A-Fa-f])+> '0'* {
+		$$ = op_node_new(stru32z("nseb"),
+			leaf_node_new('\'', "\x10"),
+			leaf_node_new('"', $1)
+		);
+	}
+seuznum <-
+	'0' [Zz] x:seuzngu {
+		$$ = x;
+	}
+seuzngu <-
+	'0'* <[0-9A-Za-z]*'.'('0'+[1-9A-Za-z]/[1-9A-Za-z])+> '0'* {
+		$$ = op_node_new(stru32z("nseb"),
+			leaf_node_new('\'', "$"),
+			leaf_node_new('"', $1)
+		);
+	}
+seunbaf <-
+	x:seunum '_' {
+		$$ = box_node_new(stru32z("nsbf"), lyse(x,
+			leaf_node_new('"', (char*)x->s)
+		));
+	}
+seuxnbf <-
+	x:seuxnum '_' {
+		$$ = box_node_new(stru32z("nsbf"),
+			lyse(x, borrow(x->r))
+		);
+	}
+seuznbf <-
+	x:seuznum '_' {
+		$$ = box_node_new(stru32z("nsbf"),
+			lyse(x, borrow(x->r))
+		);
+	}
+numesca <-
+	'\\' [Dd] '0' {
+		$$ = borrow(node_ZERO);
+	} /
+	'\\' [Dd] <[1-9]> {
+		$$ = leaf_node_new(stru32z("num"), $1);
+	} /
+	'\\' [Dd] '{' _ x:sequenc _ '}' {
+		$$ = x;
+	} /
+	'\\' [Dd] x:idstart {
+		$$ = box_node_new('[', x);
+	} /
+	'\\' [Dd] {
+		$$ = borrow(node_ZERO);
+	} /
+	'\\' [Xx] <hxdit> {
+		$$ = op_node_new(stru32z("nbas"),
+			leaf_node_new('\'', "\x10"),
+			leaf_node_new('"', $2)
+		);
+	} /
+	'\\' [Xx] '{' _ '0'+ _ '}' {
+		$$ = borrow(node_ZERO);
+	} /
+	'\\' [Xx] '{' _ x:seuzngu _ '}' {
+		$$ = x;
+	} /
+	'\\' [Xx] '{' _ x:xnuguts _ '}' {
+		$$ = x;
+	} /
+	'\\' [Zz] <[0-9A-Za-z]> {
+		$$ = op_node_new(stru32z("nbas"),
+			leaf_node_new('\'', "$"),  // 36
+			leaf_node_new('"', $3)
+		);
+	} /
+	'\\' [Zz] '{' _ '0'+ _ '}' {
+		$$ = borrow(node_ZERO);
+	} /
+	'\\' [Zz] '{' _ x:znuguts _ '}' {
+		$$ = x;
+	} /
+	'\\' [Zz] '{' _ x:znuguts _ '}' {
+		$$ = x;
+	}
+char <-
+	'\'' x:chaguts '\'' {
+		$$ = x;
+	} /
+	'\'\'' {
+		$$ = empty_node_new('\'');
+	}
+chaguts <-
+	x:charseg {
+		$$ = x;
+	}
+charseg <-
+	<[^\x27\\]+> {
+		$$ = leaf_node_new('\'', $1);
+	} /
+	x:escapdc {
+		if (x->as == '"') {
+			node* y;
+			y = lyse_and_clone(x);
+			y->as = '\'';
+			$$ = lyse(x, y);
+		} else
+			$$ = box_node_new(stru32z("'of"), x);
+	}
+string <-
+	'\x22' x:strguts '\x22' {
+		$$ = x;
+	} /
+	'\x22\x22' {
+		$$ = empty_node_new('"');
+	}
+strguts <-
+	x:striseg y:strguts {
+		$$ = op_node_new(stru32z(".||"), x, y);
+	} /
+	x:striseg {
+		$$ = x;
+	}
+striseg <-
+	<[^\x22\\]+> {
+		$$ = leaf_node_new('"', $1);
+	} /
+	x:escapdc {
+		$$ = x;
+	}
+escapdc <-
+	'\\' <([\x01-@] / [\[-`] / [\{-\x7f])> {
+		$$ = leaf_node_new('"', $1);
+	} /
+	'\\' [Aa] {
+		$$ = leaf_node_new('"', "\a");
+	} /
+	'\\' [Bb] {
+		$$ = leaf_node_new('"', "\b");
+	} /
+	'\\' [Dd] '000' {
+		$$ = box_node_new(stru32z("(,"), borrow(node_ZERO));
+	} /
+	'\\' [Dd] '00'<[1-9]> {
+		$$ = mini_box_node_new(stru32z("(,"),
+			leaf_mininode(stru32z("num"), $2)
+		);
+	} /
+	'\\' [Dd] '0'<[1-9][0-9]?> {
+		$$ = mini_box_node_new(stru32z("(,"),
+			leaf_mininode(stru32z("num"), $3)
+		);
+	} /
+	'\\' [Dd] <[1-9][0-9]?[0-9]?> {
+		$$ = mini_box_node_new(stru32z("(,"),
+			leaf_mininode(stru32z("num"), $4)
+		);
+	} /
+	'\\' [Dd] '0' '0'? {
+		$$ = box_node_new(stru32z("(,"), borrow(node_ZERO));
+	} /
+	'\\' [Dd] '{' _ x:sequenc _ '}' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'\\' [Dd] x:idstart {
+		$$ = mini_box_node_new(stru32z("(,"),
+			box_mininode('[', x)
+		);
+	} /
+	'\\' [Dd] {
+		$$ = box_node_new(stru32z("(,"), borrow(node_VOID));
+	} /
+	'\\' [Ee] {
+		$$ = leaf_node_new('"', "\e");
+	} /
+	'\\' [Ff] {
+		$$ = leaf_node_new('"', "\f");
+	} /
+	'\\' [Nn] {
+		$$ = leaf_node_new('"', "\n");
+	} /
+	'\\' [Rr] {
+		$$ = leaf_node_new('"', "\r");
+	} /
+	'\\' [Ss] x:idstart {
+		$$ = x;
+	} /
+	'\\' [Ss] '{' _ x:sequenc _ '}' {
+		$$ = x;
+	} /
+	'\\' [Ss] {
+		$$ = err_node_new("\"\\s\" escape code without an argument", NULL);
+	} /
+	'\\' [Tt] {
+		$$ = leaf_node_new('"', "\t");
+	} /
+	'\\' [Uu] '{' _ x:xnuguts _ '}' {
+		$$ = box_node_new(stru32z("\\u"), x);
+	} /
+	'\\U' <hxdit? hxdit? hxdit? hxdit?  hxdit? hxdit? hxdit? hxdit?> {
+		$$ = box_node_new(stru32z("\\u"),
+			mini_op_node_new(stru32z("nbas"),
+				leaf_mininode('\'', "\x10"),
+				leaf_mininode('"', $5)
+			)
+		);
+	} /
+	'\\u' <hxdit? hxdit? hxdit? hxdit?> {
+		$$ = box_node_new(stru32z("\\u"),
+			mini_op_node_new(stru32z("nbas"),
+				leaf_mininode('\'', "\x10"),
+				leaf_mininode('"', $6)
+			)
+		);
+	} /
+	'\\' [Vv] {
+		$$ = leaf_node_new('"', "\v");
+	} /
+	'\\' [Xx] '{' _ x:seuxngu _ '}' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'\\' [Xx] '{' _ x:xnuguts _ '}' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'\\' [Xx] <hxdit?> <hxdit?> {
+		/* let's convert the hexadecimal number to a char right here */
+		char s[2];
+		*(u16*)s = *$8 ?
+			   (*$8&15) + 9*(*$8&16)/16 +
+			16*(*$7&15) + 9*(*$7&16) :
+			   (*$7&15) + 9*(*$7&16)/16;
+		$$ = leaf_node_new('"', s);
+	} /
+	'\\' [Zz] '{' _ x:seuzngu _ '}' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'\\' [Zz] '{' _ x:znuguts _ '}' {
+		$$ = box_node_new(stru32z("(,"), x);
+	} /
+	'\\' [Zz] <[0-9A-Za-z]? [0-9A-Za-z]?> {
+		$$ = box_node_new(stru32z("(,"),
+			mini_op_node_new(stru32z("nbas"),
+				leaf_mininode('\'', "$"),
+				leaf_mininode('"', $9)
+			)
+		);
+	} /
+	<'\\' [CG-MOPQSWYcg-mopqswy]> {
+		$$ = err_node_new("Undefined escape code", leaf_node_new('"', $10));
+	} /
+	'\\' <uc> {
+		$$ = leaf_node_new('"', $11);
+	}
+hxdit <-
+	[0-9A-Fa-f]
+idstart <-
+	<id_acst> {
+		$$ = leaf_node_new('"', $1);
+	} /
+	<id_ucst> {
+		$$ = leaf_node_new('"', $2);
+	} /
+	x:escapdc {
+		$$ = x;
+	}
+id_acst <-
+	[A-Za-z_]
+# Approximately character classes L, Nl, Sm, Sc and So:
+id_ucst <-
+	'\xC2'[\xA2-\xA6\xA9-\xAA\xAC\xAE\xB0\xB1\xB5\xBA] /
+	'\xC3'[\x80-\xbf] /
+	[\xC4-\xCA][\x80-\xbf] /
+	'\xCB'[\x80\x81\x86-\x91\xA0-\xA4\xAC\xAE] /
+	'\xCD'[\xB0-\xB4\xB6\xB7\xBA-\xBD\xBF] /
+	'\xCE'[\x86\x88-\x8A\x8C\x8E\x8F]
+	'\xCE'[\xA0\xA1\xA3-\xbf] /
+	[\xCF-\xD1][\x80-\xbf] /
+	'\xD2'[\x80-\x82\x8A-\xbf] /
+	'\xD3'[\x80-\xbf] /
+	'\xD4'[\x80-\x9F] /
+	'\xD4'[\xA0-\xAF\xB1-\xbf] /
+	'\xD5'[\x80-\96\x99] /
+	'\xD5'[\xA0-\xbf] /
+	'\xD6'[\x80-\x88\x8D-\xBF] /
+	'\xD7'[\x90-\x9F] /
+	'\xD7'[\xA0\xAA\xAF-\xB2] /
+	'\xD8'[\x86-\x88\x8B\x8E-\x8F] /
+	'\xD8'[\xA0-\xbf] /
+	'\xD9'[\x80-\x8A] /
+	'\xD9'[\xAE\xAF\xB1-\xbf] /
+	'\xDA'[\x80-\xbf] /
+	'\xDB'[\x80-\x93\x95\x9E] /
+	'\xDB'[\xA5-\xA6\xA9\xAE\xAF] /
+	'\xDB'[\xBA-\xBF] /
+	'\xDC'[\x90\x92-\xAF] /
+	'\xDD'[\x8D-\xbf] /
+	'\xDE'[\x80-\xA5\xB1] /
+	'\xDF'[\x8A-\xAA] /
+	'\xDF'[\xB4-\xB6\xBA\xBE-\xBF] /
+	'\xE0' (
+		'\xA0'[\x80-\x95\x9A] /
+		'\xA0'[\xA4\xA8] /
+		'\xA1'[\x80-\x98] /
+		'\xA1'[\xA0-\xAA] /
+		'\xA2'[\xA0-\xB4\xB6-\xbf] /
+		'\xA3'[\x80-\x87] /
+		'\xA4'[\x84-\xB9] /
+		'\xA4''\xBD' /
+		'\xA5'[\x90\x98-\x9F] /
+		'\xA5'[\xA0\xA1\xB1-\xbf] /
+		'\xA6'[\x80-\x80\x85-\x8C\x8F-\x90\x93-\x9F] /
+		'\xA6'[\xA0-\xA8\xAA-\xB0\xB2\xB6-\xB9\xBD] /
+		'\xA7''\x8E' /
+		'\xA7'[\x9C-\x9D\x9F] /
+		'\xA7'[\xA0\xA1\xB0-\xB3\xBA-\xBC] /
+		'\xA8'[\x85-\x8A\x8F\x90\x93-\x9F] /
+		'\xA8'[\xA0-\xA8\xAA-\xB0\xB2\xB3\xB5\xB6\xB8\xB9] /
+		'\xA9'[\x99-\x9C\x9E] /
+		'\xA9'[\xB2-\xB4] /
+		'\xAA'[\x85-\x8D\x8F-\x91\x93-\x9F] /
+		'\xAA'[\xA0-\xA8\xAA-\xB0\xB2-\xB3\xB5-\xB9\xBD] /
+		'\xAB''\x90' /
+		'\xAB'[\xA0-\xA1\xB1\xB9] /
+		'\xAC'[\x85-\x8C\x8F\x90\x93-\x9F] /
+		'\xAC'[\xA0-\xA8\xAA-\xB0\xB2\xB3\xB5-\xB9\xBD] /
+		'\xAD'[\x9C-\x9D\x9F] /
+		'\xAD'[\xA0\xA1\xB0-\xB1] /
+		'\xAE'[\x83\x85-\x8A\x8E-\x90\x92-\x95\x99\x9A\x9C\x9E\x9F] /
+		'\xAE'[\xA3-\xA4\xA8-\xAA\xAE-\xB9] /
+		'\xAF''\x90' /
+		'\xAF'[\xB3-\xBA] /
+		'\xB0'[\x85-\x8C\x8E-\x90\x92-\x9F] /
+		'\xB0'[\xA0-\xA8\xAA-\xB9\xBD] /
+		'\xB1'[\x98-\x9A] /
+		'\xB1'[\xA0-\xA1\xBF-\xbf] /
+		'\xB2'[\x80-\x80\x85-\x8C\x8E-\x90\x92-\x9F] /
+		'\xB2'[\xA0-\xA8\xAA-\xB3\xB5-\xB9\xBD] /
+		'\xB3''\x9E' /
+		'\xB3'[\xA0-\xA1\xB1\xB2] /
+		'\xB4'[\x84-\x8C\x8E-\x90\x92-\x9F] /
+		'\xB4'[\xA0-\xBA\xBD] /
+		'\xB5'[\x8E-\x8F\x94-\x96\x9F] /
+		'\xB5'[\xA0-\xA1\xB9-\xBF] /
+		'\xB6'[\x85-\x96\x9A-\x9F] /
+		'\xB6'[\xA0-\xB1\xB3-\xBB\xBD] /
+		'\xB7'[\x80-\x86] /
+		'\xB8'[\x81-\x9F] /
+		'\xB8'[\xA0-\xB0\xB2-\xB3\xbf] /
+		'\xB9'[\x80-\x86] /
+		'\xBA'[\x81-\x82\x84\x86-\x8A\x8C-\x9F] /
+		'\xBA'[\xA0-\xA3\xA5\xA7-\xB0\xB2\xB3\xBD] /
+		'\xBB'[\x80-\x84\x86\x9C-\x9F] /
+		'\xBC'[\x80-\x83\x93\x95-\x97\x9A-\x9F] /
+		'\xBC'[\xB4\xB6\xB8] /
+		'\xBD'[\x80-\x87\x89-\x9F] /
+		'\xBD'[\xA0-\xAC] /
+		'\xBE'[\x88-\x8C] /
+		'\xBE'[\xBE-\xbf] /
+		'\xBF'[\x80-\x85\x87-\x8C\x8E-\x8F\x95-\x98]
+	) /
+	'\xE1' (
+		'\x80'[\x80-\x9F]
+		'\x80'[\xA0-\xAA\xBF] /
+		'\x81'[\x90-\x95\x9A-\x9D] /
+		'\x81'[\xA1\xA5\xA6\xAE\xAF\xB0\xB5-\xbf] /
+		'\x82'[\x80-\x81\x8E] /
+		'\x82'[\x9E-\xbf] /
+		'\x83'[\x80-\x85\x87-\x8D] /
+		'\x83'[\x90-\xBA\xBC-\xbf] /
+		[\x84-\x88][\x80-\xbf] /
+		'\x89'[\x80-\x88\x8A-\x8D\x90-\x96\x98\x9A-\x9D] /
+		'\x89'[\xA0-\xbf] /
+		'\x8A'[\x80-\x88\x8A-\x8D\x90-\x9F] /
+		'\x8A'[\xA0-\xAF\xB0\xB2-\xB5\xB80\xBE] /
+		'\x8B'[\x80\x82-\x85\x88-\x96\x98-\xbf] /
+		'\x8C'[\x80-\x90\x92-\x95\x98-\xbf] /
+		'\x8D'[\x80-\x9A] /
+		'\x8E'[\x80-\x99] /
+		'\x8E'[\xA0-\xbf] /
+		'\x8F'[\x80-\x9F] /
+		'\x8F'[\xA0-\xB5\xB8-\xBD] /
+		[\x90-\x98][\x80-\xbf] /
+		'\x99'[\x80-\x9F] /
+		'\x99'[\xA0-\xAC\xAF-\xBF] /
+		'\x9A'[\x81-\x9A] /
+		'\x9A'[\xA0-\xbf] /
+		'\x9B'[\x80-\x9F] /
+		'\x9B'[\xA0-\xAA\xAE-\xB8] /
+		'\x9C'[\x80-\x8C\x8E-\x91] /
+		'\x9C'[\xA0-\xB1] /
+		'\x9D'[\x80-\x91] /
+		'\x9D'[\xA0-\xAC\xAE-\xB0] /
+		'\x9E'[\x80-\xB3] /
+		'\x9F'[\x97\x9B-\x9C] /
+		'\xA0'[\xA0-\xbf] /
+		'\xA1'[\x80-\xB8] /
+		'\xA2'[\x80-\x84\x87-\x9F] /
+		'\xA2'[\xA0-\xA8\xAA\xB0-\xbf] /
+		'\xA3'[\x80-\xB5] /
+		'\xA4'[\x80-\x9E] /
+		'\xA5'[\x80\x90-\xAD] /
+		'\xA5'[\xB0-\xB4] /
+		'\xA6'[\x80-\xAB] /
+		'\xA6'[\xB0-\xbf] /
+		'\xA7'[\x80-\x89\x9E\x9F] /
+		'\xA7'[\xA0-\xbf] /
+		'\xA8'[\x80-\x96] /
+		'\xA8'[\xA0-\xbf] /
+		'\xA9'[\x80-\x94] /
+		'\xAA''\xA7' /
+		'\xAC'[\x85-\xB3] /
+		'\xAD'[\x85-\x8B] /
+		'\xAD'[\xA1-\xAA\xB4-\xBC] /
+		'\xAE'[\x83-\x9F] /
+		'\xAE'[\xA0\xAE-\xAF\xBA-\xbf] /
+		'\xAF'[\x80-\xA5] /
+		'\xB0'[\x80-\xA3] /
+		'\xB1'[\x8D-\x8F\x9A-\x9F] /
+		'\xB1'[\xA0-\xBD] /
+		'\xB2'[\x80-\x88\x90-\x9F] /
+		'\xB2'[\xA0-\xBA\xBD-\xBF] /
+		'\xB3'[\xA9-\xAC\xAE-\xB3\xB5-\xB6\xBA] /
+		[\xB4-\xB6][\x80-\xBF] /
+		[\xB8-\xBB][\x80-\xbf] /
+		'\xBC'[\x80-\x95\x98-\x9D] /
+		'\xBC'[\xA0-\xbf] /
+		'\xBD'[\x80-\x85\x88-\x8D\x90-\x97\x99\x9B\x9D\x9F] /
+		'\xBD\xBD' /
+		'\xBE'[\x80-\x9F] /
+		'\xBE'[\xA0-\xB4\xB6-\xBC\xBE] /
+		'\xBF'[\x82-\x84\x86-\x8C\x90-\x93\x96-\x9B] /
+		'\xBF'[\xA0-\xAC\xB2-\xB4\xB6-\xBC]
+	) /
+	'\xE2' (
+		'\x81'[\x84\x92] /
+		'\x81'[\xB1\xBA-\xBC\xBF] /
+		'\x82'[\x8A-\x8C\x90-\x9C] /
+		'\x82'[\xA0-\xBF] /
+		'\x84'[\x80-\xbf] /
+		'\x85'[\x80-\x8F] /
+		'\x85'[\xA0-\xbf] /
+		'\x86'[\x80-\x88\x8A\x8B] /
+		'\x86'[\x90-\xbf] /
+		[\x87-\x8B][\x80-\xbf] /
+		'\x8C'[\x80-\x87\x8C-\xA8\xAB-\xbf] /
+		[\x8D-\x8F][\x80-\xbf] /
+		'\x90'[\x80-\xA6] /
+		'\x91'[\x80-\x8A] /
+		'\x92'[\x9C-\xbf] /
+		'\x93'[\x80-\xA9] /
+		[\x94-\x9C][\x80-\xbf] /
+		'\x9D'[\x80-\xA7] /
+		'\x9E'[\x94-\xbf] /
+		'\x9F'[\x80-\x84\x87-\xA5\xB0-\xbf] /
+		[\xA0-\xA5][\x80-\xbf] /
+		'\xA6'[\x80-\x82\x99-\xbf] /
+		'\xA7'[\x80-\x97\x9C-\xBB\xBE\xbf] /
+		[\xA8-\xAD][\x80-\xBf] /
+		'\xAE'[\x80-\x95] /
+		'\xB0'[\xB0-\xbf] /
+		'\xB1'[\x80-\x9E] /
+		'\xB3'[\xB2-\xB3] /
+		'\xB4'[\x80-\xA5\xA7\xAD\xB0-\xbf] /
+		'\xB5'[\x80-\xA7\xAF] /
+		'\xB6'[\x80-\x96] /
+		'\xB6'[\xA0-\xA6\xA8-\xAE] /
+		'\xB6'[\xB0-\xB6\xB8-\xBE] /
+		'\xB7'[\x80-\x86\x88-\x8E] /
+		'\xB7'[\x90-\x96\x98-\x9E] /
+		'\xB8\xAF' /
+		'\xB9'[\x90-\x91] /
+		'\xBA'[\x80-\x99\x9B-\xbf] /
+		'\xBB'[\x80-\xB3] /
+		'\xBF'[\xB0-\xBB]
+	) /
+	'\xE3' (
+		'\x80'[\x84-\x87] /
+		'\x80'[\x92-\x93] /
+		'\x80'[\xA0-\xA9] /
+		'\x80'[\xB1-\xBC] /
+		'\x80'[\xBE-\xBF] /
+		'\x81'[\x81-\xbf] /
+		'\x82'[\x80-\x96\x9D-\x9F] /
+		'\x82'[\xA1-\xbf] /
+		'\x83'[\x80-\x9F] /
+		'\x83'[\xA0-\xBA\xBC-\xBF] /
+		'\x84'[\x85-\x9F] /
+		'\x84'[\xA0-\xAF\xB1-\xbf] /
+		'\x85'[\x80-\xbf] /
+		'\x86'[\x80-\x8E\x90\x91\x96-\x9F] /
+		'\x86'[\xA0-\xbf] /
+		'\x87'[\x80-\xA3] /
+		'\x87'[\xB0-\xbf] /
+		'\x88'[\x80-\x9E] /
+		'\x88'[\xAA-\xbf] /
+		'\x89'[\x80-\x87\x90] /
+		'\x89'[\xA0-\xBF] /
+		'\x8A'[\x8A-\xB0] /
+		[\x8B-\x8F][\x80-\xbf]
+	) /
+	'\xE9''\xBF''\xBC' /
+	'\xEA' (
+		[\x80-\x91][\x80-\bf] /
+		'\x92'[\x80-\x8C] /
+		'\x92'[\x90-\xbf] /
+		'\x93'[\x80-\x86] /
+		'\x93'[\x90-\xBD] /
+		'\x98'[\x90-\x9F] /
+		'\x98'[\xAA-\xAB] /
+		'\x99'[\x80-\xAE] /
+		'\x99'[\xBF-\xbf] /
+		'\x9A'[\x80-\x9D] /
+		'\x9A'[\xA0-\xbf] /
+		'\x9B'[\x80-\xAF] /
+		'\x9C'[\x97-\x9F] /
+		'\x9E'[\x8B-\xBF] /
+		'\x9F'[\x82-\x8A] /
+		'\x9F'[\xB5-\xbf] /
+		'\xA0'[\x80-\x81\x83-\x85\x87-\x8A] /
+		'\xA0'[\x8C-\xA2] /
+		'\xA0'[\xA8-\xAB] /
+		'\xA0'[\xB6-\xB9] /
+		'\xA1'[\x80-\xB3] /
+		'\xA2'[\x82-\xB3] /
+		'\xA3'[\xB2-\xB7] /
+		'\xA3''\xBB' /
+		'\xA3'[\xBD-\xBE] /
+		'\xA4'[\x8A-\xA5] /
+		('\xA4'[\xB0-\xbf] / '\xA5'[\x80-\x86]) /
+		'\xA5'[\xA0-\xBC] /
+		'\xA6'[\x84-\xB2] /
+		'\xA7''\x8F' /
+		'\xA7'[\xA0-\xA4] /
+		'\xA7'[\xA6-\xAF] /
+		'\xA7'[\xBA-\xBE] /
+		'\xA8'[\x80-\xA8] /
+		'\xA9'[\x80-\x82] /
+		'\xA9'[\x84-\x8B] /
+		'\xA9'[\xA0-\xBA] /
+		('\xA9'[\xBE-\xbf] / '\xAA'[\x80-\xAF]) /
+		'\xAA''\xB1' /
+		'\xAA'[\xB5-\xB6] /
+		'\xAA'[\xB9-\xBD] /
+		'\xAB'[\x80\x82\x9B-\x9D] /
+		'\xAB'[\xA0-\xAA\xB2-\xB4] /
+		'\xAC'[\x81-\x86\x89-\x8E\x91-\x96] /
+		'\xAC'[\xA0-\xA6\xA8-\xAE\xB0-\xbf] /
+		'\xAD'[\x80-\x9A\x9C-\x9F] /
+		'\xAD'[\xA0-\xA9] /
+		'\xB0''\x80'
+	) /
+	'\xED''\x9E'[\xA3\xB0-\xbf] /
+	'\xED''\x9F'[\x80-\x86\x8B-\x9F] /
+	'\xED''\x9F'[\xA0-\xBB] /
+	'\xEF' (
+		[\xA4-\xA9][\x80-\xAD] /
+		'\xAC'[\x80-\x86] /
+		'\xAC'[\x93-\x97\x9D\x9F-\xAF] /
+		'\xAC'[\xB0-\xB6\xB8-\xBC\xBe] /
+		'\xAD'[\x80-\x81\x83-\x84] /
+		('\xAD'[\x86-\xbf] / '\xAE'[\x80-\xB1]) /
+		('\xAF'[\x93-\xbf] / [\xB0-\xB3][\x80-\xbf] / '\xB4'[\x80-\xBD]) /
+		'\xB5'[\x90-\xbf] /
+		'\xB6'[\x80-\x8F\x92-\x9F] /
+		'\xB6'[\xA0-\xbf] /
+		'\xB7'[\x80-\x87] /
+		'\xB7'[\xB0-\xBD] /
+		'\xB9'[\xA2\xA4-\xA6\xA9] /
+		'\xB9'[\xB0-\xB4] /
+		'\xBC'[\x84\x8B\x9C-\x9E] /
+		'\xBC'[\xA1-\xBA] /
+		'\xBD'[\x81-\x9A\x9C\x9E] /
+		'\xBD'[\xA6-\xbf] /
+		'\xBE'[\x80-\xBE] /
+		'\xBF'[\x82-\x87\x8A-\x8F\x92-\x97\x9A-\x9C] /
+		'\xBF'[\xA0-\xA2\xA4-\xA6\xA8-\xAE\xBC-\xBD]
+	) /
+	'\xF0' (
+		'\x90' (
+			'\x80'[\x80-\x8B\x8D-\x9F] /
+			'\x80'[\xA0-\xA6\xA8-\xAF\xB0-\xBA\xBC-\xBD] /
+			'\x81'[\x90-\x9D] /
+			[\x82-\x83][\x80-\xBf] /
+			'\x86'[\x8C-\x8E\x90-\x9C] /
+			'\x86''\xA0' /
+			'\x87'[\x90-\xBC] /
+			'\x8A'[\x80-\x9C] /
+			'\x8C'[\x80-\x9F] /
+			'\x8D'[\x90-\xB5] /
+			'\x8E'[\x80-\x9D] /
+			'\x8F'[\x88-\x8F] /
+			'\x8F'[\x91-\x95] /
+			'\x93'[\x98-\xBB] /
+			'\x94'[\x80-\xA7] /
+			[\x98-\x9C][\x80-\xBf] /
+			'\x9D'[\x80-\x95] /
+			'\x9D'[\xA0-\xA7] /
+			'\xA0'[\x80-\x85\x88\x8A-\xAF] /
+			'\xA0'[\xB0-\xB5\xB7-\xB8\xBC] /
+			'\xA1'[\xA0-\xB8] /
+			'\xA2'[\x80-\x9E] /
+			'\xA3'[\xA0-\xB2\xB4\xB5] /
+			'\xA4'[\x80-\x95] /
+			'\xA4'[\xA0-\xB9] /
+			'\xA6'[\x80-\xB7\xBE\xBF] /
+			'\xA8'[\x80\x90-\x93\x95-\x97\x99-\x9F] /
+			'\xA8'[\xA0-\xB5] /
+			'\xA9'[\xA0-\xBC] /
+			'\xAA'[\x80-\x9C] /
+			'\xAB'[\x80-\xA4] /
+			'\xAC'[\x80-\xB5] /
+			'\xAD'[\x80-\x95] /
+			'\xAD'[\xA0-\xB2] /
+			'\xAE'[\x80-\x91] /
+			'\xB2'[\x80-\xB2] /
+			'\xB3'[\x80-\xB2] /
+			'\xB4'[\x80-\xA3] /
+			'\xBA'[\x80-\xA9] /
+			'\xBA'[\xB0-\xB1] /
+			'\xBC'[\x80-\x9C] /
+			'\xBC''\xA7' /
+			'\xBF'[\xA0-\xB6]
+		) /
+		'\x91' (
+			'\x80'[\x83-\xB7] /
+			'\x82'[\x83-\xAF] /
+			'\x83'[\x90-\xA8] /
+			'\x84'[\x83-\xA6] /
+			'\x85'[\x84\x87] /
+			'\x85'[\x90-\x9F] /
+			'\x85'[\xA0-\xB2\xB6] /
+			'\x86'[\x83-\xB2] /
+			'\x87'[\x81-\x84] /
+			'\x87'[\x9A\x9C] /
+			'\x88'[\x80-\x91\x93-\xAB] /
+			'\x8A'[\x80-\x86\x88\x8A-\x8D\x8F-\x9D\x9F] /
+			'\x8A'[\xA0-\xA8] /
+			'\x8C'[\x85-\x8C\x8F-\x90\x93-\x9F] /
+			'\x8C'[\xA0-\xA8\xAA-\xAF\xB0\xB2-\xB3\xB5-\xB9\xBD] /
+			'\x8D'[\x90\x9D-\xA1] /
+			'\x90'[\x80-\xB4] /
+			'\x91'[\x87-\x8A\x9F-\xA1] /
+			'\x92'[\x80-\xAF] /
+			'\x93'[\x84-\x85\x87] /
+			'\x96'[\x80-\xAE] /
+			'\x97'[\x98-\x9B] /
+			'\x98'[\x80-\xAF] /
+			'\x99''\x84' /
+			'\x9A'[\x80-\xAA] /
+			'\x9A''\xB8' /
+			'\x9C'[\x80-\x9A] /
+			'\x9C''\xBF' /
+			'\xA0'[\x80-\xAB] /
+			'\xA4'[\x89\x8C-\x93\x95\x96\x98-\x9F] /
+			'\xA4'[\xA0-\xAF\xBF] /
+			'\xA5''\x81' /
+			'\xA6'[\xA0-\xA7] /
+			'\xA7'[\xA1\xA3] /
+			'\xA8'[\x80\x8B-\xB2\xBA] /
+			'\xA9''\x90' /
+			'\xAA''\x9D' /
+			'\xAB'[\x80-\xB8] /
+			'\xB0'[\x80-\x88\x8A-\xAE] /
+			'\xB1''\x80' /
+			'\xB4'[\x80-\x86\x88\x89\x8B-\xB0] /
+			'\xB5''\x86' /
+			'\xB5'[\xA0-\xA5\xA7\xA8] /
+			'\xB6''\x98' /
+			'\xBB'[\xA0-\xB2] /
+			'\xBE''\xB0' /
+			'\xBF'[\x95-\xB1]
+		) /
+		'\x92'([\x80-\x8D][\x80-\xbf] / '\x8E'[\x80-\x97]) /
+		'\x93'([\x80-\x8F][\x80-\xbf] / '\x90'[\x80-\xAE]) /
+		'\x94'([\x90-\x98][\x80-\xbf] / '\x99'[\x80-\x86]) /
+		'\x96'([\xA0-\xA7][\x80-\xbf] / '\xA8'[\x80-\xB8]) /
+		'\x96''\xA9'[\x80-\x9E] /
+		'\x96''\xAB'[\x90-\xAD] /
+		'\x96''\xAC'[\x80-\xAF] /
+		'\x96''\xAD''\x85' /
+		'\x96''\xAD'[\xA3-\xB7] /
+		'\x96''\xB9'[\x80-\xBF] /
+		'\x96''\xBD''\x90' /
+		'\x96''\xBE'[\x93-\x9F] /
+		'\x96''\xBF'[\xA0-\xA1\xA3] /
+		'\x97''\x80''\x80' /
+		'\x98'(
+			'\x9F''\xB7' /
+			[\A0-\xB2][\x80-\xbf] /
+			'\xB3'[\x80-\x95]
+		) /
+		'\x98''\xB4'[\x80\x88\x90-\x92] /
+		'\x9B'(
+			'\x85'[\xA4-\xA7] /
+			'\x85'[\xB0-\xbf] /
+			[\x86-\x8A][\x80-\xbf] /
+			'\x8B'[\x80—\xBB] /
+			'\xB1'[\xB0-\xBC] /
+			'\xB2'[\x80-\x88\x90-\x99\x9C]
+		) /
+		'\x9D' (
+			[\x80-\x83][\x80-\xBf] /
+			'\x84'[\x80-\xA6] /
+			'\x85'[\xAA-\xAC] /
+			'\x86'[\x83-\x84\x8C-\x9F] /
+			'\x86'[\xA0-\xA9] /
+			'\x89\x85' /
+			'\x92'[\x9E-\x9F] /
+			'\x92'[\xA2\xA5\xA6\xA9-\xAC\xAE-\xB9\xBB] /
+			'\x93'[\x85-\xbf] /
+			'\x94'[\x87-\x8A\x8D-\x94\x96-\x9C\x9E\x9F] /
+			'\x94'[\xA0-\xB9\xBB-\xBE] /
+			'\x95'[\x80-\x84\x86\x8A-\x90] /
+			[\xA0-\xA7][\x80-\xBF] /
+			'\xA8'[\xB7-\xBA] /
+			'\xA9'[\xAD-\xB4] /
+			'\xAA'[\x85-\x86]
+		) /
+		'\x9E' (
+			'\x84'[\x80-\x9F] /
+			'\x84'[\xA0-\xAC\xB7-\xBD] /
+			'\x85'[\x8E-\x8F] /
+			'\x8B'[\x80-\x9F] /
+			'\x8B'[\xA0-\xAB\xBF] /
+			'\xA5\x8B' /
+			'\xB2'[\xAC\xB0] /
+			'\xB4\xAE' /
+			'\xB8'[\x80-\x83\x85-\x9F] /
+			'\xB8'[\xA1-\xA2\xA4\xA7\xA9-\xB2\xB4-\xB7\xB9\xBB] /
+			'\xB9'[\x82\x87\x89\x8B\x8D-\x8F\x91-\x92\x94\x97\x99\x9B\x9D\x9F] /
+			'\xB9'[\xA1-\xA2\xA4\xA7-\xAA\xAC-\xB2\xB4-\xB7\xB9-\xBC\xBE] /
+			'\xBA'[\x80-\x89\x8B-\x9B] /
+			'\xBA'[\xA1-\xA3\xA5-\xA9\xAB-\xBB] /
+			'\xBB'[\xB0-\xB1]
+		) /
+		'\x9F' (
+			'\x80'[\x80-\xAB] /
+			'\x82'[\xA0-\xAE] /
+			'\x82'[\xB1-\xBF] /
+			'\x83'[\x81-\x8F] /
+			'\x83'[\x91-\xB5] /
+			'\x88'[\x90-\xBB] /
+			'\x89'[\x80-\x88\x90\x91] /
+			'\x89'[\xA0-\xA5] /
+			[\x8C-\x8F][\x80-\xBf] /
+			[\x90-\x9A][\x80-\xbf] /
+			'\x9B'[\x80-\x97] /
+			'\x9B'[\xA0-\xAC\xB0-\xBC] /
+			[\x9C-\x9D][\x80-\xBf] /
+			'\x9F'[\xA0-\xAB] /
+			'\xA0'[\x80-\x8B] /
+			'\xA1'[\x90-\x99] /
+			'\xA2'[\x90-\xAD] /
+			'\xA2'[\xB0-\xB1] /
+			[\xA4-\xA5][\x80-\xBf] /
+			'\xA9'[\xA0-\xAD] /
+			'\xA9'[\xB0-\xB4\xB8-\xBA] /
+			'\xAA'[\x80-\x86\x90-\x9F] /
+			'\xAA'[\xA0-\xA8\xB0-\xB6] /
+			'\xAB'[\x80-\x82\x90-\x96]
+		) /
+		'\xA0\x80\x80' /
+		'\xAA\x9B\x9D' /
+		'\xAA\x9C'[\x80\xB4] /
+		'\xAB\x9D\x80' /
+		'\xAB\xA0'[\x9D\xA0] /
+		'\xAC\xBA'[\xA1\xB0] /
+		'\xAE\xAF\xA0' /
+		'\xAF'(
+			[\xA0-\xA7][\x80-\xbf] /
+			'\xA8'[\x80-\x9D]
+		) /
+		'\xB0\x80\x80' /
+		'\xB1\x8D\x8A'
+	)
+uc <-
+	[\xc0-\xdf][\x80-\xbf] /
+	[\xe0-\xef][\x80-\xbf][\x80-\xbf] /
+	[\xf0-\xff][\x80-\xbf][\x80-\xbf][\x80-\xbf]
+codestr <-
+	lcdstrm x:codstgw rcdstrm {
+		$$ = x;
+	} /
+	lcdstrm x:codstgw ':' <':'+> '}' {
+		$$ = op_node_new(stru32z(".||"), x, leaf_node_new('"', $1));
+	} /
+	lcdstrm x:codstgw <':'+> [ \t]+ ':}' {
+		$$ = op_node_new(stru32z(".||"), x, leaf_node_new('"', $2));
+	} /
+	lcdstrm <':'+> [ \t]+ ':}' {
+		$$ = leaf_node_new('"', $3);
+	} /
+	lcdstrm ':' <':'+> '}' {
+		$$ = leaf_node_new('"', $4);
+	} /
+	lcdstrm rcdstrm {
+		$$ = empty_node_new('"');
+	}
+lcdstrm <-
+	'{:' [ \t]* eol?
+rcdstrm <-
+	[ \t]* ':}'
+codstgw <-
+	<':'+> x:codstgw {
+		$$ = op_node_new(stru32z(".||"), leaf_node_new('"', $1), x);
+	} /
+	x:codstgw {
+		$$ = x;
+	}
+codstgu <-
+	x:codstgu y:codstgu {
+		$$ = op_node_new(stru32z(".||"), x, y);
+	} /
+	<icdstsg> {
+		$$ = leaf_node_new('"', $1);
+	} /
+	'{:' _ x:sequenc _ ':}' {
+		$$ = x;
+	} /
+	'{:' _ ',' _ ':}' {
+		$$ = borrow(node_EMPTY_LIST);
+	}
+icdstsg <-
+	icdstsg icdstun /
+	icdstsg [ \t]* ccolbra icdstun /
+	icdstun
+icdstun <-
+	icdstun '}' /
+	'{' icdstun /
+	[ \t] icdstun /
+	[ \t] '}' /
+	'{' [ \t]* '}' /
+	[^ \t{:}]
+ccolbra <-
+	ccolbra [ \t]+ ccolbra /
+	':'+ /
+	'{'+ /
+	'}'+ /
+	':'+ '{'+ /
+	'{'+ ':'+ /
+	'{'+ '}'+ /
+	'}'+ '{'+ /
+	':'+ '{'+ '}'+ /
+	'}'+ ':'+ '{'+ /
+	'{'+ '}'+ ':'+
+_ <-
+	gapunit*
+gapunit <-
+	space /
+	lcmment /
+	bcmment
+lcmment <-
+	'##' [^\r\n\v\f]* eol
+bcmment <-
+	lbcmntr bcmment* rbcmntr
+lbcmntr <-
+	'#*' [^#*]*             /
+	'#*' [^#]*'#'[^*]* '*#' /
+	'#*' [^*]*'*'[^#]* '*#'
+rbcmntr <-
+	     [^#*]*        '*#' /
+	     [^#]*'#'[^*]* '*#' /
+	     [^#]*'*'[^#]* '*#'
+space <-
+	[ \t] /
+	eol
+eol <-
+	'\r'?'\n' /
+	[\r\f\v]
+%%
