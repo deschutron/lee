@@ -2,6 +2,7 @@
 #include "shared_shortcuts.h"
 node* the_program;
 
+// G'Day! 
 int main(int argc, char** args) {
 	/*
 		This implementation of Lee is made for
